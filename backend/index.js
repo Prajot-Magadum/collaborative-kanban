@@ -68,6 +68,20 @@ app.get("/lists/:id/cards",async(req,res)=>{
   res.json(cards);
 })
 
+// Move Card (update list)
+app.put("/cards/:id/move", async (req, res) => {
+  const cardId = req.params.id;
+  const { listId } = req.body;
+
+  const updatedCard = await prisma.card.update({
+    where: { id: cardId },
+    data: { listId },
+  });
+
+  res.json(updatedCard); // ✅ correct
+});
+
+
 
 app.listen(5000, () => {
   console.log("Server running on http://localhost:5000");
