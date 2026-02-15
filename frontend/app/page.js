@@ -13,7 +13,7 @@ export default function Home() {
   const [newCard, setNewCard] = useState("");
   const [newBoard, setNewBoard] = useState("");
   const [activeBoardId, setActiveBoardId] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [newList, setNewList] = useState("");
 
 
@@ -98,18 +98,32 @@ socketRef.current.on("list-deleted", ({ listId }) => {
 }, []);
 
 
-  // 📦 Load boards
-  useEffect(() => {
-    if (!token) return;
+useEffect(() => {
+  const storedToken = localStorage.getItem("token");
 
-    fetch("http://localhost:5000/boards", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+  if (!storedToken) {
+    router.push("/login");
+    return;
+  }
+
+  setLoading(true);
+
+  fetch("http://localhost:5000/boards", {
+    headers: {
+      Authorization: `Bearer ${storedToken}`,
+    },
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      setBoards(data);
+      setLoading(false); // ✅ IMPORTANT FIX
     })
-      .then((res) => res.json())
-      .then(setBoards);
-  }, [token]);
+    .catch((err) => {
+      console.error(err);
+      setLoading(false);
+    });
+}, []);
+
 
   const createBoard = async () => {
   if (!newBoard) return;
@@ -283,283 +297,194 @@ const deleteList = async (listId) => {
   const activeBoard = boards.find(
   (b) => b.id === activeBoardId
 );
-
-
+if (loading && boards.length === 0) {
+  return (
+    <div className="h-screen flex items-center justify-center text-lg">
+      Loading boards...
+    </div>
+  );
+}
 
 
 return (
-  <main style={{ padding: 40, fontFamily: "sans-serif" }}>
+  <main className="min-h-screen bg-slate-100">
+
     {/* Header */}
-    <div style={{ display: "flex", justifyContent: "space-between" }}>
-      <h1>Realtime Kanban</h1>
+    <div className="bg-white shadow px-6 py-4 flex justify-between items-center">
+      <h1 className="text-xl font-semibold">Realtime Kanban</h1>
+
       <button
         onClick={() => {
           localStorage.removeItem("token");
           window.location.href = "/login";
         }}
+        className="text-red-500 hover:text-red-600"
       >
         Logout
       </button>
     </div>
 
-    {/* Boards Section */}
-    <div style={{ marginTop: 30 }}>
-      <h2>Your Boards</h2>
 
-      {/* Create Board */}
-      <div style={{ marginBottom: 20 }}>
-        <input
-          placeholder="New board name..."
-          value={newBoard}
-          onChange={(e) => setNewBoard(e.target.value)}
-          style={{
-            padding: 6,
-            borderRadius: 4,
-            border: "1px solid #ccc",
-            marginRight: 8,
-          }}
-        />
-        <button
-          onClick={createBoard}
-          style={{
-            padding: "6px 12px",
-            borderRadius: 4,
-            border: "none",
-            background: "#0070f3",
-            color: "white",
-            cursor: "pointer",
-          }}
-        >
-          Create Board
-        </button>
+    {/* Content */}
+    <div className="p-6">
+
+      {/* Boards */}
+      <div className="mb-6">
+
+        <h2 className="text-lg font-semibold mb-3">Your Boards</h2>
+
+        <div className="flex gap-2 mb-3">
+
+          <input
+            value={newBoard}
+            onChange={(e) => setNewBoard(e.target.value)}
+            placeholder="New board..."
+            className="border rounded px-3 py-2"
+          />
+
+          <button
+            onClick={createBoard}
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          >
+            Create
+          </button>
+
+        </div>
+
+        <div className="flex gap-2">
+
+          {boards.map((board) => (
+
+            <button
+              key={board.id}
+              onClick={() => loadLists(board.id)}
+              className={`px-4 py-2 rounded shadow
+              ${
+                activeBoardId === board.id
+                  ? "bg-blue-500 text-white"
+                  : "bg-white hover:bg-slate-200"
+              }`}
+            >
+              {board.title}
+            </button>
+
+          ))}
+
+        </div>
+
       </div>
 
-      {/* Board Buttons */}
-      {boards.map((board) => (
-        <button
-          key={board.id}
-          onClick={() => loadLists(board.id)}
-          style={{
-            marginRight: 10,
-            padding: "6px 12px",
-            borderRadius: 6,
-            border: "1px solid #ccc",
-            cursor: "pointer",
-            background:
-              activeBoardId === board.id ? "#0070f3" : "white",
-            color:
-              activeBoardId === board.id ? "white" : "black",
-          }}
-        >
-          {board.title}
-        </button>
-      ))}
-    </div>
 
-    {/* Active Board Section */}
-    {activeBoard && (
-      <>
-        <h2 style={{ marginTop: 40 }}>
-          Board: {activeBoard.title}
-        </h2>
+      {/* Active Board */}
+      {activeBoard && (
 
-        {/* Create List */}
-        <div style={{ marginTop: 20 }}>
-          <input
-            placeholder="New list name..."
-            value={newList}
-            onChange={(e) => setNewList(e.target.value)}
-            style={{
-              padding: 6,
-              borderRadius: 4,
-              border: "1px solid #ccc",
-              marginRight: 8,
-            }}
-          />
-          <button
-            onClick={createList}
-            disabled={!newList}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 4,
-              border: "none",
-              background: newList ? "#28a745" : "#ccc",
-              color: "white",
-              cursor: newList ? "pointer" : "not-allowed",
-            }}
-          >
-            Add List
-          </button>
-        </div>
-      </>
-    )}
+        <>
 
-    {/* Loading */}
-    {loading && (
-      <p style={{ marginTop: 20 }}>Loading board...</p>
-    )}
-
-    {/* Empty State */}
-{!loading && activeBoard && lists.length === 0 && (
-  <div
-    style={{
-      marginTop: 30,
-      padding: 20,
-      background: "#f4f5f7",
-      borderRadius: 8,
-      color: "#6b778c",
-      fontSize: 16,
-      textAlign: "center",
-      width: 300,
-    }}
-  >
-    No lists yet in this board.<br />
-    Create your first list above.
-  </div>
-)}
+          <h2 className="text-xl font-semibold mb-4">
+            {activeBoard.title}
+          </h2>
 
 
-    {/* Lists + Cards */}
-    {!loading && lists.length > 0 && (
-      <div style={{ display: "flex", gap: 20, marginTop: 40 }}>
-        {lists.map((list) => (
-          <div
-            key={list.id}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => onDrop(list.id)}
-            style={{
-              background: "#f4f5f7",
-              padding: 15,
-              borderRadius: 8,
-              width: 260,
-              minHeight: 400,
-            }}
-          >
- {/* List Header */}
-<div
-  style={{
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    background: "#ebecf0",
-    padding: "8px 10px",
-    borderRadius: 6,
-    marginBottom: 10,
-  }}
->
-  {/* Rename Input */}
-  <input
-    value={list.title}
-    onChange={(e) => {
-      const newTitle = e.target.value;
+          {/* Add List */}
+          <div className="flex gap-2 mb-6">
 
-      setLists((prev) =>
-        prev.map((l) =>
-          l.id === list.id ? { ...l, title: newTitle } : l
-        )
-      );
+            <input
+              value={newList}
+              onChange={(e) => setNewList(e.target.value)}
+              placeholder="New list..."
+              className="border px-3 py-2 rounded"
+            />
 
-      renameList(list.id, newTitle);
-    }}
-    style={{
-      flex: 1,
-      fontWeight: "bold",
-      fontSize: 16,
-      border: "none",
-      background: "transparent",
-      outline: "none",
-      color: "#172b4d",
-    }}
-  />
+            <button
+              onClick={createList}
+              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+            >
+              Add List
+            </button>
 
-  {/* Delete Button */}
-  <button
-    onClick={() => deleteList(list.id)}
-    style={{
-      border: "none",
-      background: "transparent",
-      color: "red",
-      fontSize: 18,
-      fontWeight: "bold",
-      cursor: "pointer",
-      marginLeft: 8,
-    }}
-  >
-    ✕
-  </button>
-</div>
-
-           
+          </div>
 
 
+          {/* Lists */}
+          <div className="flex gap-4 overflow-x-auto">
 
-            {/* Cards */}
-            {(cardsByList[list.id] || []).map((card) => (
+            {lists.map((list) => (
+
               <div
-                key={card.id}
-                draggable
-                onDragStart={() => setDraggedCard(card)}
-                style={{
-                  background: "white",
-                  padding: 10,
-                  borderRadius: 6,
-                  marginTop: 10,
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                  cursor: "grab",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
+                key={list.id}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => onDrop(list.id)}
+                className="bg-slate-200 rounded p-3 w-72 shrink-0"
               >
-                <span>{card.title}</span>
 
-                <button
-                  onClick={() => deleteCard(card.id)}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: "red",
-                    cursor: "pointer",
-                  }}
-                >
-                  ✕
-                </button>
+                {/* List Title */}
+                <input
+                  value={list.title}
+                  onChange={(e) =>
+                    renameList(list.id, e.target.value)
+                  }
+                  className="font-semibold bg-transparent mb-3 w-full"
+                />
+
+
+                {/* Cards */}
+                <div className="space-y-2">
+
+                  {(cardsByList[list.id] || []).map((card) => (
+
+                    <div
+                      key={card.id}
+                      draggable
+                      onDragStart={() => setDraggedCard(card)}
+                      className="bg-white p-3 rounded shadow cursor-grab hover:bg-slate-50 flex justify-between"
+                    >
+
+                      {card.title}
+
+                      <button
+                        onClick={() => deleteCard(card.id)}
+                        className="text-red-400 hover:text-red-600"
+                      >
+                        ✕
+                      </button>
+
+                    </div>
+
+                  ))}
+
+                </div>
+
+
+                {/* Add Card */}
+                <div className="mt-3">
+
+                  <input
+                    value={newCard}
+                    onChange={(e) => setNewCard(e.target.value)}
+                    placeholder="Add card..."
+                    className="w-full border rounded px-2 py-1"
+                  />
+
+                  <button
+                    onClick={() => createCard(list.id)}
+                    className="mt-2 w-full bg-blue-500 text-white py-1 rounded hover:bg-blue-600"
+                  >
+                    Add Card
+                  </button>
+
+                </div>
+
               </div>
+
             ))}
 
-            {/* Add Card */}
-            <div style={{ marginTop: 15 }}>
-              <input
-                placeholder="New task..."
-                value={newCard}
-                onChange={(e) => setNewCard(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: 6,
-                  borderRadius: 4,
-                  border: "1px solid #ccc",
-                }}
-              />
-              <button
-                style={{
-                  marginTop: 8,
-                  width: "100%",
-                  padding: 6,
-                  borderRadius: 4,
-                  border: "none",
-                  background: "#0070f3",
-                  color: "white",
-                  cursor: "pointer",
-                }}
-                onClick={() => createCard(list.id)}
-              >
-                Add Card
-              </button>
-            </div>
           </div>
-        ))}
-      </div>
-    )}
+
+        </>
+      )}
+
+    </div>
+
   </main>
 );
 
