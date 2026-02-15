@@ -97,11 +97,11 @@ app.post("/auth/login", async (req, res) => {
 
 
 app.post("/boards", requireAuth, async (req, res) => {
-  const { title } = req.body;
+  
 
   const board = await prisma.board.create({
     data: {
-      title,
+      title: req.body.title,
       userId: req.userId,
     },
   });
@@ -223,6 +223,7 @@ app.get("/lists/:id/cards", requireAuth, async (req, res) => {
   res.json(cards);
 });
 
+
 // Move Card (update list)
 app.put("/cards/:id/move", requireAuth, async (req, res) => {
   const cardId = req.params.id;
@@ -259,6 +260,37 @@ app.put("/cards/:id/move", requireAuth, async (req, res) => {
   res.json(updated);
 });
 
+
+app.put("/lists/:id", requireAuth, async (req, res) => {
+  const listId = req.params.id;
+  const { title } = req.body;
+
+  // verify ownership
+  const list = await prisma.list.findFirst({
+    where: {
+      id: listId,
+      board: {
+        userId: req.userId,
+      },
+    },
+  });
+
+  if (!list) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const updatedList = await prisma.list.update({
+    where: { id: listId },
+    data: { title },
+  });
+
+  io.to(list.boardId).emit("list-renamed", updatedList);
+
+  res.json(updatedList);
+});
+
+
+
 app.delete("/cards/:id", requireAuth, async (req, res) => {
   const cardId = req.params.id;
 
@@ -294,6 +326,41 @@ app.delete("/cards/:id", requireAuth, async (req, res) => {
 
   res.json({ success: true });
 });
+
+app.delete("/lists/:id", requireAuth, async (req, res) => {
+  const listId = req.params.id;
+
+  // verify ownership
+  const list = await prisma.list.findFirst({
+    where: {
+      id: listId,
+      board: {
+        userId: req.userId,
+      },
+    },
+  });
+
+  if (!list) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  // delete cards first (safe cascade)
+  await prisma.card.deleteMany({
+    where: { listId },
+  });
+
+  // delete list
+  await prisma.list.delete({
+    where: { id: listId },
+  });
+
+  io.to(list.boardId).emit("list-deleted", {
+    listId,
+  });
+
+  res.json({ success: true });
+});
+
 
 
 

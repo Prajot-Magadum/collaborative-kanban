@@ -66,6 +66,17 @@ export default function Home() {
     ),
   }));
 });
+socketRef.current.on("list-deleted", ({ listId }) => {
+  setLists((prev) =>
+    prev.filter((list) => list.id !== listId)
+  );
+
+  setCardsByList((prev) => {
+    const updated = { ...prev };
+    delete updated[listId];
+    return updated;
+  });
+});
 
 
   socketRef.current.on("connect_error", (err) => {
@@ -218,6 +229,37 @@ const deleteCard = async (cardId) => {
   });
 };
 
+const renameList = async (listId, newTitle) => {
+  const token = localStorage.getItem("token");
+
+  await fetch(`http://localhost:5000/lists/${listId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ title: newTitle }),
+  });
+};
+
+const deleteList = async (listId) => {
+  if(!confirm("Delete this list? "))return;
+  const token = localStorage.getItem("token");
+
+  await fetch(`http://localhost:5000/lists/${listId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  // update UI immediately
+  setLists((prev) =>
+    prev.filter((list) => list.id !== listId)
+  );
+};
+
+
 
   const onDrop = async (listId) => {
     if (!draggedCard) return;
@@ -336,13 +378,14 @@ return (
           />
           <button
             onClick={createList}
+            disabled={!newList}
             style={{
               padding: "6px 12px",
               borderRadius: 4,
               border: "none",
-              background: "#28a745",
+              background: newList ? "#28a745" : "#ccc",
               color: "white",
-              cursor: "pointer",
+              cursor: newList ? "pointer" : "not-allowed",
             }}
           >
             Add List
@@ -357,11 +400,24 @@ return (
     )}
 
     {/* Empty State */}
-    {!loading && activeBoard && lists.length === 0 && (
-      <p style={{ marginTop: 20 }}>
-        This board has no lists.
-      </p>
-    )}
+{!loading && activeBoard && lists.length === 0 && (
+  <div
+    style={{
+      marginTop: 30,
+      padding: 20,
+      background: "#f4f5f7",
+      borderRadius: 8,
+      color: "#6b778c",
+      fontSize: 16,
+      textAlign: "center",
+      width: 300,
+    }}
+  >
+    No lists yet in this board.<br />
+    Create your first list above.
+  </div>
+)}
+
 
     {/* Lists + Cards */}
     {!loading && lists.length > 0 && (
@@ -379,7 +435,63 @@ return (
               minHeight: 400,
             }}
           >
-            <h3>{list.title}</h3>
+ {/* List Header */}
+<div
+  style={{
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    background: "#ebecf0",
+    padding: "8px 10px",
+    borderRadius: 6,
+    marginBottom: 10,
+  }}
+>
+  {/* Rename Input */}
+  <input
+    value={list.title}
+    onChange={(e) => {
+      const newTitle = e.target.value;
+
+      setLists((prev) =>
+        prev.map((l) =>
+          l.id === list.id ? { ...l, title: newTitle } : l
+        )
+      );
+
+      renameList(list.id, newTitle);
+    }}
+    style={{
+      flex: 1,
+      fontWeight: "bold",
+      fontSize: 16,
+      border: "none",
+      background: "transparent",
+      outline: "none",
+      color: "#172b4d",
+    }}
+  />
+
+  {/* Delete Button */}
+  <button
+    onClick={() => deleteList(list.id)}
+    style={{
+      border: "none",
+      background: "transparent",
+      color: "red",
+      fontSize: 18,
+      fontWeight: "bold",
+      cursor: "pointer",
+      marginLeft: 8,
+    }}
+  >
+    ✕
+  </button>
+</div>
+
+           
+
+
 
             {/* Cards */}
             {(cardsByList[list.id] || []).map((card) => (
@@ -450,4 +562,8 @@ return (
     )}
   </main>
 );
+
+
+
+
 }
