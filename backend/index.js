@@ -1,9 +1,10 @@
 import "dotenv/config";
+import { PrismaClient } from "@prisma/client";
 import http from "http";
 import {Server} from "socket.io";
 import express from "express";
 import cors from "cors";
-import { PrismaClient } from "@prisma/client";
+
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
@@ -94,37 +95,56 @@ app.post("/auth/login", async (req, res) => {
 });
 
 
-
-
 app.post("/boards", requireAuth, async (req, res) => {
-  
+  try {
+    // Verify user exists
+    const userExists = await prisma.user.findUnique({
+      where: { id: req.userId },
+    });
 
-  const board = await prisma.board.create({
-    data: {
-      title: req.body.title,
-      userId: req.userId,
-    },
-  });
-  await prisma.list.createMany({
-  data: [
-    { title: "Todo", boardId: board.id },
-    { title: "Doing", boardId: board.id },
-    { title: "Done", boardId: board.id },
-  ],
+    if (!userExists) {
+      return res.status(401).json({ error: "User not found. Please login again." });
+    }
+
+    const board = await prisma.board.create({
+      data: {
+        title: req.body.title,
+        userId: req.userId,
+      },
+    });
+
+    await prisma.list.createMany({
+      data: [
+        { title: "Todo", boardId: board.id },
+        { title: "Doing", boardId: board.id },
+        { title: "Done", boardId: board.id },
+      ],
+    });
+
+    res.json(board);
+  } catch (error) {
+    console.error("Error creating board:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
-
-  res.json(board);
-});
-
-
 
 app.get("/boards", requireAuth, async (req, res) => {
-  const boards = await prisma.board.findMany({
-    where: { userId: req.userId },
-  });
+  try {
+    console.log("Fetching boards for user:", req.userId); // Debug log
+    
+    const boards = await prisma.board.findMany({
+      where: { userId: req.userId },
+    });
 
-  res.json(boards);
+    console.log("Found boards:", boards); // Debug log
+    res.json(boards);
+  } catch (error) {
+    console.error("Error fetching boards:", error); // Error log
+    res.status(500).json({ error: error.message });
+  }
 });
+
+
 
 // create list
 app.post("/lists", requireAuth, async (req, res) => {
@@ -259,6 +279,47 @@ app.put("/cards/:id/move", requireAuth, async (req, res) => {
 
   res.json(updated);
 });
+// Update card details
+app.put("/cards/:id", requireAuth, async (req, res) => {
+  const cardId = req.params.id;
+  const { title, description, priority, dueDate } = req.body;
+
+  const card = await prisma.card.findFirst({
+    where: {
+      id: cardId,
+      list: {
+        board: { userId: req.userId },
+      },
+    },
+    include: {
+      list: true,
+    },
+  });
+
+  if (!card) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const updated = await prisma.card.update({
+    where: { id: cardId },
+    data: {
+      title,
+      description,
+      priority,
+      dueDate: dueDate ? new Date(dueDate) : null,
+    },
+  });
+
+  // realtime update
+  io.to(card.list.boardId).emit("card-updated", {
+    listId: card.listId,
+    card: updated,
+  });
+
+  res.json(updated);
+});
+
+
 
 
 app.put("/lists/:id", requireAuth, async (req, res) => {

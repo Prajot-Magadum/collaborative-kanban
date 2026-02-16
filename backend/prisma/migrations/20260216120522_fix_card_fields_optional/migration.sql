@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Card" ALTER COLUMN "description" DROP NOT NULL,
+ALTER COLUMN "priority" DROP NOT NULL,
+ALTER COLUMN "dueDate" DROP NOT NULL;
