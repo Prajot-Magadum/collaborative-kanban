@@ -11,9 +11,35 @@ model Board {
   id        String   @id @default(uuid())
   title     String
   createdAt DateTime @default(now())
+
   userId    String
   user      User     @relation(fields: [userId], references: [id])
+
   lists     List[]
+  members   BoardMember[]
+}
+
+model BoardMember {
+  id        String   @id @default(uuid())
+  boardId   String
+  userId    String
+  role      String   @default("member") // "owner" or "member"
+  joinedAt  DateTime @default(now())
+
+  board     Board    @relation(fields: [boardId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([boardId, userId])
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  boards    Board[]
+  boardMembers BoardMember[]
 }
 
 model List {
@@ -23,21 +49,17 @@ model List {
   cards   Card[]
   board   Board  @relation(fields: [boardId], references: [id])
 }
-
 model Card {
-  id          String    @id @default(uuid())
-  title       String
-  description String?
-  priority    String?
-  dueDate     DateTime?
-  listId      String
-  list        List      @relation(fields: [listId], references: [id])
+  id           String    @id @default(uuid())
+  title        String
+  description  String?
+  priority     String?
+  dueDate      DateTime?
+  labels       String[]  @default([])
+  archived     Boolean   @default(false)
+  archivedAt   DateTime?
+  
+  listId       String
+  list         List      @relation(fields: [listId], references:[id])
 }
 
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  boards    Board[]
-}

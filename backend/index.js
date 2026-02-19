@@ -35,6 +35,28 @@ const requireAuth = (req, res, next) => {
     res.status(401).json({ error: "Invalid token" });
   }
 };
+// Check if user has access to board (owner or member)
+const requireBoardAccess = async (req, res, next) => {
+  const boardId = req.params.boardId || req.body.boardId || req.params.id;
+
+  const board = await prisma.board.findFirst({
+    where: {
+      id: boardId,
+      OR: [
+        { userId: req.userId },
+        { members: { some: { userId: req.userId } } },
+      ],
+    },
+  });
+
+  if (!board) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  req.board = board;
+  req.isOwner = board.userId === req.userId;
+  next();
+};
 
 app.get("/me", requireAuth, async (req, res) => {
   const user = await prisma.user.findUnique({
@@ -127,19 +149,180 @@ app.post("/boards", requireAuth, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// Invite member to board by email
+app.post("/boards/:id/invite", requireAuth, async (req, res) => {
+  const boardId = req.params.id;
+  const { email } = req.body;
+
+  // Check if requester is board owner
+  const board = await prisma.board.findFirst({
+    where: { id: boardId, userId: req.userId },
+  });
+
+  if (!board) {
+    return res.status(403).json({ error: "Only board owner can invite members" });
+  }
+
+  // Find user by email
+  const invitedUser = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (!invitedUser) {
+    return res.status(404).json({ error: "User not found with that email" });
+  }
+
+  if (invitedUser.id === req.userId) {
+    return res.status(400).json({ error: "You cannot invite yourself" });
+  }
+
+  try {
+    // Add member
+    const member = await prisma.boardMember.create({
+      data: {
+        boardId,
+        userId: invitedUser.id,
+        role: "member",
+      },
+      include: {
+        user: { select: { id: true, email: true } },
+      },
+    });
+
+    // Realtime notify board
+    io.to(boardId).emit("member-added", {
+      boardId,
+      member,
+    });
+
+    res.json(member);
+  } catch (err) {
+    res.status(400).json({ error: "User is already a member" });
+  }
+});
+
+// Get board members
+app.get("/boards/:id/members", requireAuth, async (req, res) => {
+  const boardId = req.params.id;
+
+  // Check access
+  const hasAccess = await prisma.board.findFirst({
+    where: {
+      id: boardId,
+      OR: [
+        { userId: req.userId },
+        { members: { some: { userId: req.userId } } },
+      ],
+    },
+  });
+
+  if (!hasAccess) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const members = await prisma.boardMember.findMany({
+    where: { boardId },
+    include: {
+      user: { select: { id: true, email: true } },
+    },
+  });
+
+  // Also include owner
+  const owner = await prisma.user.findUnique({
+    where: { id: hasAccess.userId },
+    select: { id: true, email: true },
+  });
+
+  res.json({ owner, members });
+});
+
+// Remove member from board
+app.delete("/boards/:id/members/:userId", requireAuth, async (req, res) => {
+  const boardId = req.params.id;
+  const targetUserId = req.params.userId;
+
+  // Only owner can remove members
+  const board = await prisma.board.findFirst({
+    where: { id: boardId, userId: req.userId },
+  });
+
+  if (!board) {
+    return res.status(403).json({ error: "Only board owner can remove members" });
+  }
+
+  await prisma.boardMember.deleteMany({
+    where: { boardId, userId: targetUserId },
+  });
+
+  io.to(boardId).emit("member-removed", {
+    boardId,
+    userId: targetUserId,
+  });
+
+  res.json({ success: true });
+});
+
+// Get shared boards (boards where user is a member)
+app.get("/boards/shared", requireAuth, async (req, res) => {
+  const sharedBoards = await prisma.boardMember.findMany({
+    where: { userId: req.userId },
+    include: {
+      board: {
+        include: {
+          user: { select: { id: true, email: true } },
+        },
+      },
+    },
+  });
+
+  res.json(sharedBoards.map((m) => m.board));
+});
 
 app.get("/boards", requireAuth, async (req, res) => {
   try {
-    console.log("Fetching boards for user:", req.userId); // Debug log
-    
-    const boards = await prisma.board.findMany({
+    // Get owned boards
+    const ownedBoards = await prisma.board.findMany({
       where: { userId: req.userId },
+      include: {
+        user: { select: { id: true, email: true } },
+        members: {
+          include: {
+            user: { select: { id: true, email: true } },
+          },
+        },
+      },
     });
 
-    console.log("Found boards:", boards); // Debug log
-    res.json(boards);
+    // Get shared boards (where user is a member)
+    const sharedMemberships = await prisma.boardMember.findMany({
+      where: { userId: req.userId },
+      include: {
+        board: {
+          include: {
+            user: { select: { id: true, email: true } },
+            members: {
+              include: {
+                user: { select: { id: true, email: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const sharedBoards = sharedMemberships.map((m) => ({
+      ...m.board,
+      isShared: true,
+    }));
+
+    const allBoards = [
+      ...ownedBoards.map((b) => ({ ...b, isOwner: true })),
+      ...sharedBoards,
+    ];
+
+    res.json(allBoards);
   } catch (error) {
-    console.error("Error fetching boards:", error); // Error log
+    console.error("Error fetching boards:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -179,14 +362,16 @@ app.post("/lists", requireAuth, async (req, res) => {
 app.get("/boards/:id/lists", requireAuth, async (req, res) => {
   const boardId = req.params.id;
 
+  // Check if owner OR member
   const board = await prisma.board.findFirst({
     where: {
       id: boardId,
-      userId: req.userId,
+      OR: [
+        { userId: req.userId },
+        { members: { some: { userId: req.userId } } },
+      ],
     },
   });
-console.log("Route userId:", req.userId);
-console.log("BoardId:", boardId);
 
   if (!board) {
     return res.status(403).json({ error: "Access denied" });
@@ -234,6 +419,7 @@ app.get("/lists/:id/cards", requireAuth, async (req, res) => {
   const cards = await prisma.card.findMany({
     where: {
       listId,
+      archived: false, // ✅ Only get non-archived cards
       list: {
         board: { userId: req.userId },
       },
@@ -280,9 +466,10 @@ app.put("/cards/:id/move", requireAuth, async (req, res) => {
   res.json(updated);
 });
 // Update card details
+// Update card details
 app.put("/cards/:id", requireAuth, async (req, res) => {
   const cardId = req.params.id;
-  const { title, description, priority, dueDate } = req.body;
+  const { title, description, priority, dueDate, labels } = req.body;
 
   const card = await prisma.card.findFirst({
     where: {
@@ -307,6 +494,7 @@ app.put("/cards/:id", requireAuth, async (req, res) => {
       description,
       priority,
       dueDate: dueDate ? new Date(dueDate) : null,
+      labels: labels || [],
     },
   });
 
@@ -318,8 +506,112 @@ app.put("/cards/:id", requireAuth, async (req, res) => {
 
   res.json(updated);
 });
+// Archive Card
+app.put("/cards/:id/archive", requireAuth, async (req, res) => {
+  const cardId = req.params.id;
 
+  const card = await prisma.card.findFirst({
+    where: {
+      id: cardId,
+      list: {
+        board: { userId: req.userId },
+      },
+    },
+    include: {
+      list: true,
+    },
+  });
 
+  if (!card) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const updated = await prisma.card.update({
+    where: { id: cardId },
+    data: {
+      archived: true,
+      archivedAt: new Date(),
+    },
+  });
+
+  // Realtime notify
+  io.to(card.list.boardId).emit("card-archived", {
+    cardId,
+    listId: card.listId,
+  });
+
+  res.json(updated);
+});
+
+// Restore Archived Card
+app.put("/cards/:id/restore", requireAuth, async (req, res) => {
+  const cardId = req.params.id;
+
+  const card = await prisma.card.findFirst({
+    where: {
+      id: cardId,
+      list: {
+        board: { userId: req.userId },
+      },
+    },
+    include: {
+      list: true,
+    },
+  });
+
+  if (!card) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const updated = await prisma.card.update({
+    where: { id: cardId },
+    data: {
+      archived: false,
+      archivedAt: null,
+    },
+  });
+
+  // Realtime notify
+  io.to(card.list.boardId).emit("card-restored", {
+    card: updated,
+    listId: card.listId,
+  });
+
+  res.json(updated);
+});
+
+// Get Archived Cards for a Board
+app.get("/boards/:id/archived", requireAuth, async (req, res) => {
+  const boardId = req.params.id;
+
+  const board = await prisma.board.findFirst({
+    where: {
+      id: boardId,
+      userId: req.userId,
+    },
+  });
+
+  if (!board) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const archivedCards = await prisma.card.findMany({
+    where: {
+      archived: true,
+      list: {
+        boardId,
+      },
+    },
+    include: {
+      list: true,
+    },
+    orderBy: {
+      archivedAt: 'desc',
+    },
+  });
+
+  res.json(archivedCards);
+});
 
 
 app.put("/lists/:id", requireAuth, async (req, res) => {
