@@ -58,6 +58,7 @@ model Card {
   labels       String[]  @default([])
   archived     Boolean   @default(false)
   archivedAt   DateTime?
+  archivedBy   String?
   
   listId       String
   list         List      @relation(fields: [listId], references:[id])

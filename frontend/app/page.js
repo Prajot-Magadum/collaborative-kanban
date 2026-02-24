@@ -624,10 +624,7 @@ if (loading && boards.length === 0) {
 
 return (
   <main className="h-screen flex flex-col bg-slate-100">
-
-    {/* Top Navbar */}
  {/* Top Navbar */}
-{/* Top Navbar */}
 <div className="flex justify-between items-center px-6 py-4 bg-white shadow">
   <h1 className="text-xl font-bold text-slate-800">
     Realtime Kanban

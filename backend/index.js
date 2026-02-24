@@ -531,6 +531,7 @@ app.put("/cards/:id/archive", requireAuth, async (req, res) => {
     data: {
       archived: true,
       archivedAt: new Date(),
+      archivedBy: req.userId,
     },
   });
 
@@ -544,15 +545,14 @@ app.put("/cards/:id/archive", requireAuth, async (req, res) => {
 });
 
 // Restore Archived Card
+// Restore Archived Card
 app.put("/cards/:id/restore", requireAuth, async (req, res) => {
   const cardId = req.params.id;
 
   const card = await prisma.card.findFirst({
     where: {
       id: cardId,
-      list: {
-        board: { userId: req.userId },
-      },
+      archivedBy: req.userId, // ✅ Only allow user who archived it to restore
     },
     include: {
       list: true,
@@ -560,7 +560,7 @@ app.put("/cards/:id/restore", requireAuth, async (req, res) => {
   });
 
   if (!card) {
-    return res.status(403).json({ error: "Access denied" });
+    return res.status(403).json({ error: "Access denied or card not found" });
   }
 
   const updated = await prisma.card.update({
@@ -568,6 +568,7 @@ app.put("/cards/:id/restore", requireAuth, async (req, res) => {
     data: {
       archived: false,
       archivedAt: null,
+      archivedBy: null, // ✅ Clear who archived it
     },
   });
 
@@ -581,13 +582,18 @@ app.put("/cards/:id/restore", requireAuth, async (req, res) => {
 });
 
 // Get Archived Cards for a Board
+// Get Archived Cards for a Board (only cards archived by current user)
 app.get("/boards/:id/archived", requireAuth, async (req, res) => {
   const boardId = req.params.id;
 
+  // Check if user is owner OR member
   const board = await prisma.board.findFirst({
     where: {
       id: boardId,
-      userId: req.userId,
+      OR: [
+        { userId: req.userId },
+        { members: { some: { userId: req.userId } } },
+      ],
     },
   });
 
@@ -595,9 +601,11 @@ app.get("/boards/:id/archived", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "Access denied" });
   }
 
+  // Only return cards archived by this specific user
   const archivedCards = await prisma.card.findMany({
     where: {
       archived: true,
+      archivedBy: req.userId, // ✅ Only show cards archived by current user
       list: {
         boardId,
       },
@@ -612,7 +620,6 @@ app.get("/boards/:id/archived", requireAuth, async (req, res) => {
 
   res.json(archivedCards);
 });
-
 
 app.put("/lists/:id", requireAuth, async (req, res) => {
   const listId = req.params.id;
@@ -642,20 +649,23 @@ app.put("/lists/:id", requireAuth, async (req, res) => {
   res.json(updatedList);
 });
 
-
-
 app.delete("/cards/:id", requireAuth, async (req, res) => {
   const cardId = req.params.id;
 
-  // 1️⃣ Verify card belongs to this user
+  // Verify card was archived by this user OR user is board owner
   const card = await prisma.card.findFirst({
     where: {
       id: cardId,
-      list: {
-        board: {
-          userId: req.userId,
+      OR: [
+        { archivedBy: req.userId }, // User who archived it
+        {
+          list: {
+            board: {
+              userId: req.userId, // Board owner
+            },
+          },
         },
-      },
+      ],
     },
     include: {
       list: true,
@@ -666,19 +676,23 @@ app.delete("/cards/:id", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "Access denied" });
   }
 
-  // 2️⃣ Delete card
   await prisma.card.delete({
     where: { id: cardId },
   });
 
-  // 3️⃣ Realtime notify board room
-  io.to(card.list.boardId).emit("card-deleted", {
-    cardId,
-    listId: card.listId,
-  });
+  // Only emit if card was actually in a list (not fully deleted)
+  if (!card.archived) {
+    io.to(card.list.boardId).emit("card-deleted", {
+      cardId,
+      listId: card.listId,
+    });
+  }
 
   res.json({ success: true });
 });
+
+
+
 
 app.delete("/lists/:id", requireAuth, async (req, res) => {
   const listId = req.params.id;
